@@ -1,0 +1,4 @@
+(executable
+ (public_name ocluster-monitor)
+ (name main)
+ (libraries monitor unix notty nottui nottui-unix lwd))
