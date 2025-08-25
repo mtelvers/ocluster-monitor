@@ -8,4 +8,3 @@ val make_braille_char : float -> int
 
 val generate_braille_histogram : float array -> int -> int -> string
 (** Generate a braille histogram from float data *)
-

@@ -56,4 +56,3 @@ let generate_braille_histogram data width height =
 
     let rows = List.init height generate_row in
     String.concat "\n" rows
-

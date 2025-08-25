@@ -13,11 +13,12 @@
 
 (documentation https://github.com/mtelvers/ocluster-monitor)
 
+
 (package
  (name ocluster-monitor)
  (synopsis "Real-time monitoring tool for ocluster")
  (description "A terminal-based monitoring tool for ocluster-admin with real-time histograms using Unicode braille characters. Displays pool capacity, running jobs, queue lengths, and utilization history with responsive multi-line layouts.")
- (depends ocaml dune unix str notty nottui nottui-unix lwd (alcotest :with-test))
+ (depends ocaml dune unix str mosaic (alcotest :with-test))
  (tags
   ("monitoring" "cluster" "terminal" "ocluster" "braille" "histogram")))
 

@@ -1,3 +1,3 @@
 (library
  (name monitor)
- (libraries unix str notty nottui nottui-unix lwd))
+ (libraries unix str mosaic))
