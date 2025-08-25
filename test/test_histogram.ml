@@ -58,7 +58,7 @@ let test_generate_braille_histogram_single_row () =
 let test_generate_braille_histogram_multi_row () =
   let open Alcotest in
   (* Test exact levels 1,2,3,4 with height=2 (8 levels total) *)
-  let level_data = [| 0.125; 0.25; 0.375; 0.5 |] in
+  let level_data = [| 0.25; 0.5; 0.75; 1.0 |] in
   (* levels 1,2,3,4 out of 8 *)
   let result = Histogram.generate_braille_histogram level_data 2 2 in
 
