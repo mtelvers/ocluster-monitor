@@ -9,5 +9,3 @@ val make_braille_char : float -> int
 val generate_braille_histogram : float array -> int -> int -> string
 (** Generate a braille histogram from float data *)
 
-val generate_ascii_histogram : float array -> int -> string
-(** Generate ASCII histogram for ncurses compatibility *)

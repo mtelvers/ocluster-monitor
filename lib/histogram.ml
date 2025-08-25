@@ -57,23 +57,3 @@ let generate_braille_histogram data width height =
     let rows = List.init height generate_row in
     String.concat "\n" rows
 
-(** Generate ASCII histogram for ncurses compatibility *)
-let generate_ascii_histogram data width =
-  let len = Array.length data in
-  if len = 0 then String.make width ' '
-  else
-    let max_val = Array.fold_left max 0.0 data in
-    let result = Buffer.create width in
-
-    for i = 0 to width - 1 do
-      let data_idx = i * 2 in
-      let value = if data_idx < len then data.(data_idx) else 0.0 in
-      let normalized = if max_val > 0.0 then value /. max_val else 0.0 in
-
-      let char =
-        if normalized = 0.0 then ' ' else if normalized < 0.25 then '.' else if normalized < 0.5 then ':' else if normalized < 0.75 then 'o' else '#'
-      in
-      Buffer.add_char result char
-    done;
-
-    Buffer.contents result

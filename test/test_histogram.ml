@@ -94,6 +94,48 @@ let test_generate_queue_histogram () =
   (* Each braille char is 3 bytes in UTF-8 *)
   check int "expected 3 braille characters" 3 char_count
 
+let test_multi_row_histograms () =
+  let open Alcotest in
+  (* Test 3-row histogram - this was a complex test case in run_test *)
+  let step_data = [| 0.2; 0.4; 0.6; 0.8; 1.0; 0.8; 0.6; 0.4; 0.2; 0.0 |] in
+  let result = Histogram.generate_braille_histogram step_data 5 2 in
+  let lines = String.split_on_char '\n' result in
+
+  Printf.printf "Step function 2-row result:\n";
+  List.iteri (fun i line -> Printf.printf "  Row %d: '%s'\n" i line) lines;
+  check int "step function rows" 2 (List.length lines);
+
+  (* Test 3-row histogram with exact mathematical progression *)
+  let tall_data = Array.init 12 (fun i -> float_of_int (i + 1) /. 12.0) in
+  let tall_result = Histogram.generate_braille_histogram tall_data 6 3 in
+  let tall_lines = String.split_on_char '\n' tall_result in
+
+  Printf.printf "Tall 3-row result:\n";
+  List.iteri (fun i line -> Printf.printf "  Row %d: '%s'\n" i line) tall_lines;
+  check int "tall histogram rows" 3 (List.length tall_lines)
+
+let test_edge_cases_and_patterns () =
+  let open Alcotest in
+  (* Test sine wave pattern *)
+  let sine_data =
+    Array.init 20 (fun i ->
+        let x = float_of_int i *. 2.0 *. Float.pi /. 19.0 in
+        (sin x +. 1.0) /. 2.0)
+  in
+  let sine_result = Histogram.generate_braille_histogram sine_data 10 1 in
+
+  Printf.printf "Sine wave result: '%s'\n" sine_result;
+  check bool "sine wave not empty" true (String.length sine_result > 0);
+
+  (* Test exact boundary cases *)
+  let exact_data = [| 0.0; 0.25; 0.5; 0.75; 1.0; 0.0 |] in
+  let exact_result = Histogram.generate_braille_histogram exact_data 3 2 in
+  let exact_lines = String.split_on_char '\n' exact_result in
+
+  Printf.printf "Exact boundary test:\n";
+  List.iteri (fun i line -> Printf.printf "  Row %d: '%s'\n" i line) exact_lines;
+  check int "exact test rows" 2 (List.length exact_lines)
+
 let () =
   let open Alcotest in
   run "Histogram"
@@ -102,4 +144,6 @@ let () =
       ("generate_histogram_single", [ test_case "single row" `Quick test_generate_braille_histogram_single_row ]);
       ("generate_histogram_multi", [ test_case "multi row" `Quick test_generate_braille_histogram_multi_row ]);
       ("generate_queue", [ test_case "queue histogram" `Quick test_generate_queue_histogram ]);
+      ("multi_row_histograms", [ test_case "multi row complex" `Quick test_multi_row_histograms ]);
+      ("edge_cases", [ test_case "patterns and edges" `Quick test_edge_cases_and_patterns ]);
     ]
