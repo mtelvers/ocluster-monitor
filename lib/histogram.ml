@@ -26,7 +26,6 @@ let generate_braille_histogram data width height =
   let len = Array.length data in
   if len = 0 then String.make width ' '
   else
-    let result = Buffer.create ((width * height) + height - 1) in
     let data_pairs =
       List.init width (fun i ->
           let left_idx = i * 2 in
@@ -37,27 +36,26 @@ let generate_braille_histogram data width height =
     in
 
     (* Generate histogram row by row, from top to bottom *)
-    for row = 0 to height - 1 do
-      if row > 0 then Buffer.add_char result '\n';
+    let generate_row row =
+      let row_height_fraction = 1.0 /. float_of_int height in
+      let row_bottom_level = float_of_int (height - row - 1) *. row_height_fraction in
+      let row_top_level = float_of_int (height - row) *. row_height_fraction in
+      let height_in_row n = if n <= row_bottom_level then 0.0 else if n >= row_top_level then 1.0 else (n -. row_bottom_level) /. row_height_fraction in
 
-      (* Each braille character represents 2 data points *)
-      List.iter
-        (fun (left_normalized, right_normalized) ->
-          (* Calculate which portion of the full height each column should show *)
-          (* For this row, calculate which slice of the total height to show *)
-          (* Each row represents 1/height of the total range *)
-          let row_height_fraction = 1.0 /. float_of_int height in
-          let row_bottom_level = float_of_int (height - row - 1) *. row_height_fraction in
-          let row_top_level = float_of_int (height - row) *. row_height_fraction in
+      let chars =
+        List.map
+          (fun (left_normalized, right_normalized) ->
+            let braille_char = make_braille_char_dual (height_in_row left_normalized) (height_in_row right_normalized) in
+            let b = Buffer.create 4 in
+            Buffer.add_utf_8_uchar b (Uchar.of_int braille_char);
+            Buffer.contents b)
+          data_pairs
+      in
+      String.concat "" chars
+    in
 
-          let height_in_row n = if n <= row_bottom_level then 0.0 else if n >= row_top_level then 1.0 else (n -. row_bottom_level) /. row_height_fraction in
-
-          let braille_char = make_braille_char_dual (height_in_row left_normalized) (height_in_row right_normalized) in
-          Buffer.add_utf_8_uchar result (Uchar.of_int braille_char))
-        data_pairs
-    done;
-
-    Buffer.contents result
+    let rows = List.init height generate_row in
+    String.concat "\n" rows
 
 (** Generate ASCII histogram for ncurses compatibility *)
 let generate_ascii_histogram data width =

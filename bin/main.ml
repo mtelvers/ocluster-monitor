@@ -1,15 +1,24 @@
 open Monitor
 
-let usage_msg = "monitor [--once] [--test]"
-let once_mode = ref false
-let test_mode = ref false
+type config = { once_mode : bool; test_mode : bool }
 
-let speclist =
-  [ ("--once", Arg.Set once_mode, " Run once and exit (for testing)"); ("--test", Arg.Set test_mode, " Test histogram generation with known values") ]
+let default_config = { once_mode = false; test_mode = false }
+let usage_msg = "monitor [--once] [--test]"
+
+let parse_args () =
+  let config = ref default_config in
+  let speclist =
+    [
+      ("--once", Arg.Unit (fun () -> config := { !config with once_mode = true }), " Run once and exit (for testing)");
+      ("--test", Arg.Unit (fun () -> config := { !config with test_mode = true }), " Test histogram generation with known values");
+    ]
+  in
+  Arg.parse speclist (fun _ -> ()) usage_msg;
+  !config
 
 let () =
-  Arg.parse speclist (fun _ -> ()) usage_msg;
-  try if !test_mode then run_test () else if !once_mode then run_once () else main_loop () with
+  let config = parse_args () in
+  try if config.test_mode then run_test () else if config.once_mode then run_once () else main_loop () with
   | Sys_error msg ->
       Printf.eprintf "Error: %s\n" msg;
       exit 1

@@ -11,117 +11,115 @@ let parse_pool_list output =
       else None)
     lines
 
+type parse_state = {
+  capacity : int;
+  queue_count : int;
+  running_count : int;
+  state : [ `Looking | `InQueue | `InRegistered | `InDisconnected | `InClients ];
+  in_queue_bracket : bool;
+  queue_is_backlog : bool;
+}
+
+let initial_state = { capacity = 0; queue_count = 0; running_count = 0; state = `Looking; in_queue_bracket = false; queue_is_backlog = false }
+
+let parse_capacity_line line =
+  try
+    let cap_str = String.trim (String.sub line 9 (String.length line - 9)) in
+    Some (int_of_string cap_str)
+  with _ -> None
+
+let parse_queue_line line =
+  let is_backlog =
+    String.contains line '('
+    &&
+    try
+      let paren_start = String.index line '(' + 1 in
+      let paren_end = String.index_from line paren_start ')' in
+      let state = String.sub line paren_start (paren_end - paren_start) in
+      String.trim state = "backlog"
+    with _ -> false
+  in
+  is_backlog
+
+let count_queue_items content =
+  let trimmed = String.trim content in
+  if trimmed = "" then 0
+  else
+    let items = String.split_on_char ' ' trimmed |> List.filter (fun s -> String.trim s <> "") in
+    List.length items
+
+let parse_running_count line =
+  try
+    let len = String.length line in
+    if len > 8 && String.sub line (len - 8) 8 = "running)" then
+      let rec find_paren pos = if pos < 0 then raise Not_found else if line.[pos] = '(' then pos else find_paren (pos - 1) in
+      let paren_pos = find_paren (len - 9) in
+      let count_str = String.sub line (paren_pos + 1) (len - 9 - paren_pos) in
+      let count_str = String.trim count_str in
+      let parts = String.split_on_char ' ' count_str in
+      match parts with num_str :: "running" :: _ -> Some (int_of_string num_str) | [ num_str ] -> Some (int_of_string num_str) | _ -> None
+    else None
+  with _ -> None
+
+let parse_line state line =
+  let trimmed = String.trim line in
+  let len = String.length trimmed in
+
+  (* Parse capacity line *)
+  if len > 9 && String.sub trimmed 0 9 = "capacity:" then match parse_capacity_line trimmed with Some cap -> { state with capacity = cap } | None -> state
+    (* Parse queue line *)
+  else if len > 6 && String.sub trimmed 0 6 = "queue:" then
+    let is_backlog = parse_queue_line trimmed in
+    let new_state = { state with state = `InQueue; queue_is_backlog = is_backlog } in
+
+    if is_backlog && String.contains trimmed '[' then
+      if String.contains trimmed ']' then
+        (* Single-line queue - count items *)
+        try
+          let queue_start = String.index trimmed '[' in
+          let queue_end = String.rindex trimmed ']' in
+          let queue_content = String.sub trimmed (queue_start + 1) (queue_end - queue_start - 1) in
+          let count = count_queue_items queue_content in
+          { new_state with queue_count = count; in_queue_bracket = false }
+        with _ -> new_state
+      else
+        (* Multi-line queue starts *)
+        try
+          let queue_start = String.index trimmed '[' in
+          let queue_content = String.sub trimmed (queue_start + 1) (len - queue_start - 1) in
+          let additional_count = if String.trim queue_content <> "" then 1 else 0 in
+          { new_state with queue_count = state.queue_count + additional_count; in_queue_bracket = true }
+        with _ -> { new_state with in_queue_bracket = true }
+    else
+      (* Ready queue - don't count machines *)
+      { new_state with in_queue_bracket = false } (* Parse lines within queue brackets *)
+  else if state.in_queue_bracket && state.queue_is_backlog then
+    if String.contains trimmed ']' then
+      (* End of queue bracket *)
+      try
+        let queue_end = String.rindex trimmed ']' in
+        let queue_content = String.sub trimmed 0 queue_end in
+        let additional_count = if String.trim queue_content <> "" then 1 else 0 in
+        { state with queue_count = state.queue_count + additional_count; in_queue_bracket = false }
+      with _ -> { state with in_queue_bracket = false }
+    else
+      (* Middle of queue bracket *)
+      let additional_count = if String.trim trimmed <> "" then 1 else 0 in
+      { state with queue_count = state.queue_count + additional_count } (* Skip lines within ready queue brackets *)
+  else if state.in_queue_bracket && not state.queue_is_backlog then
+    if String.contains trimmed ']' then { state with in_queue_bracket = false } else state (* Parse section transitions *)
+  else if len >= 11 && String.sub trimmed 0 11 = "registered:" then { state with state = `InRegistered }
+  else if len >= 13 && String.sub trimmed 0 13 = "disconnected:" then { state with state = `InDisconnected }
+  else if len >= 8 && String.sub trimmed 0 8 = "clients:" then { state with state = `InClients } (* Parse worker lines in registered section *)
+  else if state.state = `InRegistered && String.contains trimmed '(' && String.contains trimmed ')' then
+    match parse_running_count trimmed with Some count -> { state with running_count = state.running_count + count } | None -> state
+  else state
+
 let parse_pool_details pool output =
   let lines = String.split_on_char '\n' output in
-  let capacity = ref 0 in
-  let queue_count = ref 0 in
-  let running_count = ref 0 in
-
-  (* Parse each line with a clear state machine approach *)
-  let parse_state = ref `Looking in
-  let in_queue_bracket = ref false in
-  let queue_is_backlog = ref false in
-
-  List.iter
-    (fun line ->
-      let trimmed = String.trim line in
-
-      (* Parse capacity line *)
-      if String.length trimmed > 9 && String.sub trimmed 0 9 = "capacity:" then
-        let cap_str = String.trim (String.sub trimmed 9 (String.length trimmed - 9)) in
-        try capacity := int_of_string cap_str with _ -> () (* Parse queue line - look for "(backlog)" or "(ready)" *)
-      else if String.length trimmed > 6 && String.sub trimmed 0 6 = "queue:" then (
-        parse_state := `InQueue;
-        (* Check if this is a backlog (jobs) or ready (machines) queue *)
-        let is_backlog =
-          String.contains trimmed '('
-          &&
-          try
-            let paren_start = String.index trimmed '(' + 1 in
-            let paren_end = String.index_from trimmed paren_start ')' in
-            let state = String.sub trimmed paren_start (paren_end - paren_start) in
-            String.trim state = "backlog"
-          with _ -> false
-        in
-
-        (* Store whether this queue contains jobs (backlog) or machines (ready) *)
-        queue_is_backlog := is_backlog;
-
-        (* Only count items if this is a backlog queue (jobs), not ready queue (machines) *)
-        if is_backlog then (
-          if
-            (* Check if bracket starts on this line *)
-            String.contains trimmed '['
-          then (
-            in_queue_bracket := true;
-            (* Check if bracket also closes on this line *)
-            if String.contains trimmed ']' then (
-              in_queue_bracket := false;
-              (* Single-line queue - count items *)
-              try
-                let queue_start = String.index trimmed '[' in
-                let queue_end = String.rindex trimmed ']' in
-                let queue_content = String.sub trimmed (queue_start + 1) (queue_end - queue_start - 1) in
-                let queue_content = String.trim queue_content in
-                if queue_content <> "" then
-                  (* Count by splitting on whitespace - each job entry is separated by whitespace *)
-                  let items = String.split_on_char ' ' queue_content |> List.filter (fun s -> String.trim s <> "") in
-                  queue_count := List.length items
-              with _ -> ())
-            else
-              (* Multi-line queue starts - count items on this line after '[' *)
-              try
-                let queue_start = String.index trimmed '[' in
-                let queue_content = String.sub trimmed (queue_start + 1) (String.length trimmed - queue_start - 1) in
-                let queue_content = String.trim queue_content in
-                if queue_content <> "" then queue_count := !queue_count + 1
-              with _ -> ()))
-        else
-          (* Ready queue - don't count machines, reset any bracket tracking *)
-          in_queue_bracket := false
-        (* Parse lines within queue brackets - only count if it's a backlog queue *))
-      else if !in_queue_bracket && !queue_is_backlog then (
-        if String.contains trimmed ']' then (
-          (* End of queue bracket *)
-          in_queue_bracket := false;
-          (* Count items on this line before ']' *)
-          try
-            let queue_end = String.rindex trimmed ']' in
-            let queue_content = String.sub trimmed 0 queue_end in
-            let queue_content = String.trim queue_content in
-            if queue_content <> "" then queue_count := !queue_count + 1
-          with _ -> ())
-        else
-          (* Middle of queue bracket - count items on this line *)
-          let queue_content = String.trim trimmed in
-          if queue_content <> "" then queue_count := !queue_count + 1 (* Skip lines within ready queue brackets (machines, not jobs) *))
-      else if !in_queue_bracket && not !queue_is_backlog then (
-        if String.contains trimmed ']' then in_queue_bracket := false (* Parse registered section - transition state *))
-      else if String.length trimmed >= 11 && String.sub trimmed 0 11 = "registered:" then parse_state := `InRegistered
-        (* Parse disconnected section - transition state *)
-      else if String.length trimmed >= 13 && String.sub trimmed 0 13 = "disconnected:" then parse_state := `InDisconnected
-        (* Parse clients section - transition state *)
-      else if String.length trimmed >= 8 && String.sub trimmed 0 8 = "clients:" then parse_state := `InClients (* Parse worker lines in registered section *)
-      else if !parse_state = `InRegistered && String.contains trimmed '(' && String.contains trimmed ')' then
-        (* Look for "X running)" pattern at end of line using simple string operations *)
-        try
-          let len = String.length trimmed in
-          if len > 8 && String.sub trimmed (len - 8) 8 = "running)" then
-            (* Find the opening parenthesis before "running)" *)
-            let rec find_paren pos = if pos < 0 then raise Not_found else if trimmed.[pos] = '(' then pos else find_paren (pos - 1) in
-            let paren_pos = find_paren (len - 9) in
-            let count_str = String.sub trimmed (paren_pos + 1) (len - 9 - paren_pos) in
-            let count_str = String.trim count_str in
-            let parts = String.split_on_char ' ' count_str in
-            match parts with
-            | num_str :: "running" :: _ -> running_count := !running_count + int_of_string num_str
-            | [ num_str ] -> running_count := !running_count + int_of_string num_str
-            | _ -> ()
-        with _ -> () (* No running pattern found or parsing failed *))
-    lines;
-
-  let utilization = if !capacity > 0 then float_of_int !running_count /. float_of_int !capacity else 0.0 in
-  { name = pool; capacity = !capacity; running = !running_count; queue = !queue_count; utilization }
+  let final_state = List.fold_left parse_line initial_state lines in
+  let utilization = if final_state.capacity > 0 then float_of_int final_state.running_count /. float_of_int final_state.capacity else 0.0 in
+  { name = pool; capacity = final_state.capacity; running = final_state.running_count; queue = final_state.queue_count; utilization }
 
 let run_command cmd =
   let ic = Unix.open_process_in cmd in
