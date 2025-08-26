@@ -117,7 +117,7 @@ let create_pool_line pool_info util_hist queue_hist hist_width hist_height =
     (* Combine all rows vertically *)
     Ui.vbox all_rows
 
-type pool_row_data = { pool_name : string; pool_info : pool_info; history : history }
+type pool_row_data = { pool_name : string; pool_info : pool_info; history : history; last_updated : float }
 
 (* Mosaic component for the main application *)
 let monitor_app () =
@@ -152,7 +152,7 @@ let monitor_app () =
                let pool_info = Parser.get_pool_info pool_name in
                let history = create_history initial_history_size in
                let updated_history = add_to_history history pool_info.utilization pool_info.queue in
-               { pool_name; pool_info; history = updated_history })
+               { pool_name; pool_info; history = updated_history; last_updated = Unix.time () })
              pools
          in
          set_pools_data initial_data);
@@ -188,17 +188,22 @@ let monitor_app () =
       None)
     ~deps:(Deps.keys [ Deps.int hist_width; Deps.int (List.length pools_data) ]);
 
-  (* Timer for updating data every 60 seconds *)
-  use_timer ~every:60.0 (fun () ->
-      let updated_data =
-        List.map
-          (fun pool_data ->
-            let updated_info = Parser.get_pool_info pool_data.pool_name in
-            let updated_history = add_to_history pool_data.history updated_info.utilization updated_info.queue in
-            { pool_data with pool_info = updated_info; history = updated_history })
-          pools_data
-      in
-      set_pools_data updated_data);
+  (* Staggered pool updates - update pool with oldest timestamp *)
+  let num_pools = List.length pools_data in
+  let timer_interval = if num_pools > 0 then 60.0 /. float_of_int num_pools else 60.0 in
+
+  use_timer ~every:timer_interval (fun () ->
+      if num_pools > 0 then
+        (* Find the pool with the oldest timestamp *)
+        let oldest_pool = List.fold_left (fun acc pool -> if pool.last_updated < acc.last_updated then pool else acc) (List.hd pools_data) pools_data in
+
+        let updated_info = Parser.get_pool_info oldest_pool.pool_name in
+        let updated_history = add_to_history oldest_pool.history updated_info.utilization updated_info.queue in
+        let updated_pool_data = { oldest_pool with pool_info = updated_info; history = updated_history; last_updated = Unix.time () } in
+
+        (* Update only this specific pool in the pools_data *)
+        let updated_data = List.map (fun pd -> if pd.pool_name = oldest_pool.pool_name then updated_pool_data else pd) pools_data in
+        set_pools_data updated_data);
 
   (* Keyboard handler for quit *)
   use_keyboard (Input.Char (Uchar.of_char 'q')) Cmd.quit;
