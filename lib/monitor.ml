@@ -1,7 +1,9 @@
 open Mosaic
 open Parser
+open Mosaic_charts
 
 type history = { util_history : float array; queue_history : float array }
+type pool_row_data = { pool_name : string; pool_info : pool_info; history : history; last_updated : float }
 
 let create_history size = { util_history = Array.make size 0.0; queue_history = Array.make size 0.0 }
 
@@ -45,79 +47,77 @@ let style_for_queue queue =
   else if queue < 250 then Style.(fg Yellow ++ bold)
   else Style.(fg Red ++ bold)
 
-(* Mosaic UI creation functions *)
-let create_header cols =
-  let hist_width = max 10 ((cols - 72) / 2) in
+(* Create monitor display with integrated charts *)
+let create_monitor_display pools_data cols hist_height =
+  (* Calculate available space for charts *)
+  let pool_data_width = 36 in
+  let queue_data_width = 7 in
+  let spacing = 1 in
+  let reserved_width = pool_data_width + queue_data_width + spacing in
+  let available_chart_space = max 20 (cols - reserved_width) in
+  let hist_width = available_chart_space / 2 in
 
-  (* Build header to exactly match the data row layout *)
-  let pool_data_part = Printf.sprintf "%-20s %8s %7s " "Pool" "Capacity" "Running" in
-  let util_part = Printf.sprintf "Util History%s" (String.make (max 0 (hist_width - 12)) ' ') in
-  let spacing_part = " " in
-  let queue_part = Printf.sprintf "%5s " "Queue" in
-  let queue_hist_part = Printf.sprintf "Queue History%s" (String.make (max 0 (hist_width - 13)) ' ') in
+  (* Create header *)
+  let header =
+    let pool_header = Printf.sprintf "%-20s %8s %7s " "Pool" "Capacity" "Running" in
+    let util_header = Printf.sprintf "%*s " hist_width "Utilization History" in
+    let queue_header = Printf.sprintf "%5s %*s" "Queue" hist_width "Queue History" in
+    Ui.vbox [ Ui.text ~style:Style.bold (pool_header ^ util_header ^ queue_header); Ui.text (String.make cols '-') ]
+  in
 
-  let header_line = pool_data_part ^ util_part ^ spacing_part ^ queue_part ^ queue_hist_part in
-  let separator = String.make (String.length header_line) '-' in
+  (* Create pool rows with integrated charts *)
+  let pool_rows =
+    List.map
+      (fun pool_data ->
+        let pool_info = pool_data.pool_info in
+        let util_style = style_for_utilization pool_info.utilization in
+        let queue_style = style_for_queue pool_info.queue in
 
-  Ui.vbox [ Ui.text header_line; Ui.text separator ]
+        (* Pool data text *)
+        let pool_text = Printf.sprintf "%-20s %8d %7d " pool_info.name pool_info.capacity pool_info.running in
 
-let create_pool_line pool_info util_hist queue_hist hist_width hist_height =
-  let util_histogram = Histogram.generate_braille_histogram util_hist hist_width hist_height in
-  let queue_histogram = Histogram.generate_braille_histogram queue_hist hist_width hist_height in
+        if hist_height = 1 then
+          (* Single row - use sparklines *)
+          let util_chart =
+            sparkline ~width:hist_width ~render_kind:`Braille ~style:util_style ~range:(0.0, 1.0) (Array.to_list pool_data.history.util_history)
+          in
+          let queue_chart =
+            sparkline ~width:hist_width ~render_kind:`Braille ~style:queue_style ~range:(0.0, 1.0) (Array.to_list pool_data.history.queue_history)
+          in
+          Ui.hbox [ Ui.text pool_text; util_chart; Ui.text (Printf.sprintf " %5d " pool_info.queue); queue_chart ]
+        else
+          (* Multi-row - use line charts *)
+          let util_points = Array.to_list pool_data.history.util_history |> List.mapi (fun i y -> { x = float_of_int i; y }) in
+          let queue_points = Array.to_list pool_data.history.queue_history |> List.mapi (fun i y -> { x = float_of_int i; y }) in
 
-  let util_style = style_for_utilization pool_info.utilization in
-  let queue_style = style_for_queue pool_info.queue in
+          let util_chart =
+            line ~width:(`Cells hist_width) ~height:(`Cells hist_height) ~render_kind:Braille ~show_axes:false ~y_range:(0.0, 1.0) ~series_styles:[ util_style ]
+              [ ("", util_points) ]
+          in
+          let queue_chart =
+            line ~width:(`Cells hist_width) ~height:(`Cells hist_height) ~render_kind:Braille ~show_axes:false ~y_range:(0.0, 1.0)
+              ~series_styles:[ queue_style ]
+              [ ("", queue_points) ]
+          in
 
-  let pool_data = Printf.sprintf "%-20s %8d %7d " pool_info.name pool_info.capacity pool_info.running in
+          (* For multi-row, align pool info with charts *)
+          Ui.hbox
+            [
+              Ui.vbox [ Ui.text pool_text; (* Add empty lines to match chart height *) Ui.vbox (List.init (hist_height - 1) (fun _ -> Ui.empty)) ];
+              util_chart;
+              Ui.vbox
+                [
+                  Ui.text (Printf.sprintf " %5d " pool_info.queue);
+                  (* Add empty lines to match chart height *)
+                  Ui.vbox (List.init (hist_height - 1) (fun _ -> Ui.empty));
+                ];
+              queue_chart;
+            ])
+      pools_data
+  in
 
-  if hist_height = 1 then
-    (* Single line layout - horizontal composition *)
-    Ui.hbox
-      [
-        Ui.text pool_data;
-        Ui.text ~style:util_style util_histogram;
-        Ui.text (Printf.sprintf " %5d " pool_info.queue);
-        Ui.text ~style:queue_style queue_histogram;
-      ]
-  else
-    (* Multi-line layout - pool info on same line as first histogram row *)
-    let util_hist_lines = String.split_on_char '\n' util_histogram in
-    let queue_hist_lines = String.split_on_char '\n' queue_histogram in
-
-    let pool_data_width = String.length pool_data in
-    let queue_value_width = 7 in
-
-    (* Create all rows *)
-    let all_rows =
-      List.mapi
-        (fun i util_line ->
-          let queue_hist_line = if i < List.length queue_hist_lines then List.nth queue_hist_lines i else "" in
-
-          if i = 0 then
-            (* First row: pool info + first histogram row + queue value + queue histogram *)
-            Ui.hbox
-              [
-                Ui.text pool_data;
-                Ui.text ~style:util_style util_line;
-                Ui.text (Printf.sprintf " %5d " pool_info.queue);
-                Ui.text ~style:queue_style queue_hist_line;
-              ]
-          else
-            (* Subsequent rows: just util histogram with exact same padding as pool_data + queue_value *)
-            Ui.hbox
-              [
-                Ui.text (String.make pool_data_width ' ');
-                Ui.text ~style:util_style util_line;
-                Ui.text (String.make queue_value_width ' ');
-                Ui.text ~style:queue_style queue_hist_line;
-              ])
-        util_hist_lines
-    in
-
-    (* Combine all rows vertically *)
-    Ui.vbox all_rows
-
-type pool_row_data = { pool_name : string; pool_info : pool_info; history : history; last_updated : float }
+  (* Combine header and rows *)
+  Ui.vbox (header :: pool_rows)
 
 (* Mosaic component for the main application *)
 let monitor_app () =
@@ -137,7 +137,15 @@ let monitor_app () =
   (* Calculate initial history size based on current terminal size *)
   let cols = terminal_size.width in
   let rows = terminal_size.height in
-  let hist_width = max 10 ((cols - 72) / 2) in
+
+  (* Calculate available space for charts using same logic as header *)
+  let pool_data_width = 36 in
+  let queue_data_width = 7 in
+  let spacing = 1 in
+  let reserved_width = pool_data_width + queue_data_width + spacing in
+  let available_chart_space = max 20 (cols - reserved_width) in
+  let hist_width = available_chart_space / 2 in
+
   let initial_history_size = hist_width * 2 in
 
   (* Initialize pool data on first render *)
@@ -214,21 +222,12 @@ let monitor_app () =
   (* Header (2 lines) + status (1 line) *)
   let hist_height = max 1 (available_rows / max 1 num_pools) in
 
-  let header = create_header cols in
-
-  let pool_rows =
-    List.map
-      (fun pool_data -> create_pool_line pool_data.pool_info pool_data.history.util_history pool_data.history.queue_history hist_width hist_height)
-      pools_data
-  in
+  let monitor_display = create_monitor_display pools_data cols hist_height in
 
   let status_text = Printf.sprintf "Press 'q' to quit | Data updates every 60 seconds | Terminal: %dx%d" cols rows in
   let status = Ui.text ~style:(Style.fg Blue) status_text in
 
-  Ui.vbox ([ header; Ui.empty ] @ pool_rows @ [ Ui.empty; status ])
-
-(* Export histogram module *)
-module Histogram = Histogram
+  Ui.vbox [ monitor_display; Ui.empty; status ]
 
 (* Export parser module *)
 module Parser = Parser

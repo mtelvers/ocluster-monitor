@@ -1,7 +1,7 @@
 (test
- (name test_histogram)
+ (name test_parser)
  (libraries monitor alcotest))
 
 (test
- (name test_parser)
+ (name test_monitor)
  (libraries monitor alcotest))
