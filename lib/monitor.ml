@@ -62,7 +62,7 @@ let create_monitor_display pools_data cols hist_height =
     let pool_header = Printf.sprintf "%-20s %8s %7s " "Pool" "Capacity" "Running" in
     let util_header = Printf.sprintf "%*s " hist_width "Utilization History" in
     let queue_header = Printf.sprintf "%5s %*s" "Queue" hist_width "Queue History" in
-    Ui.vbox [ Ui.text ~style:Style.bold (pool_header ^ util_header ^ queue_header); Ui.text (String.make cols '-') ]
+    Ui.vbox [ Ui.text ~style:Style.bold (pool_header ^ util_header ^ queue_header); Ui.divider ~orientation:`Horizontal () ]
   in
 
   (* Create pool rows with integrated charts *)
@@ -227,7 +227,7 @@ let monitor_app () =
   let status_text = Printf.sprintf "Press 'q' to quit | Data updates every 60 seconds | Terminal: %dx%d" cols rows in
   let status = Ui.text ~style:(Style.fg Blue) status_text in
 
-  Ui.vbox [ monitor_display; Ui.empty; status ]
+  Ui.vbox [ monitor_display; Ui.divider ~orientation:`Horizontal (); status ]
 
 (* Export parser module *)
 module Parser = Parser
